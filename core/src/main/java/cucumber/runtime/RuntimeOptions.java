@@ -3,16 +3,17 @@ package cucumber.runtime;
 import cucumber.api.SnippetType;
 import cucumber.api.StepDefinitionReporter;
 import cucumber.api.SummaryPrinter;
-import cucumber.runtime.formatter.ColorAware;
+import cucumber.api.formatter.ColorAware;
+import cucumber.api.formatter.Formatter;
+import cucumber.api.formatter.StrictAware;
+import cucumber.runner.EventBus;
 import cucumber.runtime.formatter.PluginFactory;
-import cucumber.runtime.formatter.StrictAware;
 import cucumber.runtime.io.ResourceLoader;
 import cucumber.runtime.model.CucumberFeature;
 import cucumber.runtime.model.PathWithLines;
-import gherkin.I18n;
-import gherkin.formatter.Formatter;
-import gherkin.formatter.Reporter;
-import gherkin.util.FixJava;
+import cucumber.util.FixJava;
+import gherkin.GherkinDialect;
+import gherkin.GherkinDialectProvider;
 
 import java.io.InputStreamReader;
 import java.io.Reader;
@@ -20,7 +21,9 @@ import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.ResourceBundle;
 import java.util.regex.Pattern;
 
@@ -34,7 +37,9 @@ public class RuntimeOptions {
     static String usageText;
 
     private final List<String> glue = new ArrayList<String>();
-    private final List<Object> filters = new ArrayList<Object>();
+    private final List<String> tagFilters = new ArrayList<String>();
+    private final List<Pattern> nameFilters = new ArrayList<Pattern>();
+    private final Map<String, List<Long>> lineFilters = new HashMap<String, List<Long>>();
     private final List<String> featurePaths = new ArrayList<String>();
     private final List<String> pluginFormatterNames = new ArrayList<String>();
     private final List<String> pluginStepDefinitionReporterNames = new ArrayList<String>();
@@ -47,6 +52,7 @@ public class RuntimeOptions {
     private boolean monochrome = false;
     private SnippetType snippetType = SnippetType.UNDERSCORE;
     private boolean pluginNamesInstantiated;
+    private EventBus bus;
 
     /**
      * Create a new instance from a string of options, for example:
@@ -98,7 +104,9 @@ public class RuntimeOptions {
     }
 
     private void parse(List<String> args) {
-        List<Object> parsedFilters = new ArrayList<Object>();
+        List<String> parsedTagFilters = new ArrayList<String>();
+        List<Pattern> parsedNameFilters = new ArrayList<Pattern>();
+        Map<String, List<Long>> parsedLineFilters = new HashMap<String, List<Long>>();
         List<String> parsedFeaturePaths = new ArrayList<String>();
         List<String> parsedGlue = new ArrayList<String>();
         ParsedPluginData parsedPluginData = new ParsedPluginData();
@@ -120,7 +128,7 @@ public class RuntimeOptions {
                 String gluePath = args.remove(0);
                 parsedGlue.add(gluePath);
             } else if (arg.equals("--tags") || arg.equals("-t")) {
-                parsedFilters.add(args.remove(0));
+                parsedTagFilters.add(args.remove(0));
             } else if (arg.equals("--plugin") || arg.equals("--add-plugin") || arg.equals("-p")) {
                 parsedPluginData.addPluginName(args.remove(0), arg.equals("--add-plugin"));
             } else if (arg.equals("--format") || arg.equals("-f")) {
@@ -138,7 +146,7 @@ public class RuntimeOptions {
             } else if (arg.equals("--name") || arg.equals("-n")) {
                 String nextArg = args.remove(0);
                 Pattern patternFilter = Pattern.compile(nextArg);
-                parsedFilters.add(patternFilter);
+                parsedNameFilters.add(patternFilter);
             } else if (arg.startsWith("--junit,")) {
                 for (String option : arg.substring("--junit,".length()).split(",")) {
                     parsedJunitOptions.add(option);
@@ -147,14 +155,22 @@ public class RuntimeOptions {
                 printUsage();
                 throw new CucumberException("Unknown option: " + arg);
             } else {
-                parsedFeaturePaths.add(arg);
+                PathWithLines pathWithLines = new PathWithLines(arg);
+                parsedFeaturePaths.add(pathWithLines.path);
+                if (!pathWithLines.lines.isEmpty()) {
+                    String key = pathWithLines.path.replace("classpath:", "");
+                    addLineFilters(parsedLineFilters, key, pathWithLines.lines);
+                }
             }
         }
-        if (!parsedFilters.isEmpty() || haveLineFilters(parsedFeaturePaths)) {
-            filters.clear();
-            filters.addAll(parsedFilters);
-            if (parsedFeaturePaths.isEmpty() && !featurePaths.isEmpty()) {
-                stripLinesFromFeaturePaths(featurePaths);
+        if (!parsedTagFilters.isEmpty() || !parsedNameFilters.isEmpty() || !parsedLineFilters.isEmpty() || haveLineFilters(parsedFeaturePaths)) {
+            tagFilters.clear();
+            tagFilters.addAll(parsedTagFilters);
+            nameFilters.clear();
+            nameFilters.addAll(parsedNameFilters);
+            lineFilters.clear();
+            for (String path : parsedLineFilters.keySet()) {
+                lineFilters.put(path, parsedLineFilters.get(path));
             }
         }
         if (!parsedFeaturePaths.isEmpty()) {
@@ -176,6 +192,14 @@ public class RuntimeOptions {
         parsedPluginData.updatePluginSummaryPrinterNames(pluginSummaryPrinterNames);
     }
 
+    private void addLineFilters(Map<String, List<Long>> parsedLineFilters, String key, List<Long> lines) {
+        if (parsedLineFilters.containsKey(key)) {
+            parsedLineFilters.get(key).addAll(lines);
+        } else {
+            parsedLineFilters.put(key, lines);
+        }
+    }
+
     private boolean haveLineFilters(List<String> parsedFeaturePaths) {
         for (String pathName : parsedFeaturePaths) {
             if (pathName.startsWith("@") || PathWithLines.hasLineFilters(pathName)) {
@@ -183,15 +207,6 @@ public class RuntimeOptions {
             }
         }
         return false;
-    }
-
-    private void stripLinesFromFeaturePaths(List<String> featurePaths) {
-        List<String> newPaths = new ArrayList<String>();
-        for (String pathName : featurePaths) {
-            newPaths.add(PathWithLines.stripLineFilters(pathName));
-        }
-        featurePaths.clear();
-        featurePaths.addAll(newPaths);
     }
 
     private void printUsage() {
@@ -211,41 +226,23 @@ public class RuntimeOptions {
     }
 
     private int printI18n(String language) {
-        List<I18n> all = I18n.getAll();
-
-        if (language.equalsIgnoreCase("help")) {
-            for (I18n i18n : all) {
-                System.out.println(i18n.getIsoCode());
-            }
-            return 0;
-        } else {
-            return printKeywordsFor(language, all);
-        }
-    }
-
-    private int printKeywordsFor(String language, List<I18n> all) {
-        for (I18n i18n : all) {
-            if (i18n.getIsoCode().equalsIgnoreCase(language)) {
-                System.out.println(i18n.getKeywordTable());
-                return 0;
-            }
-        }
-
-        System.err.println("Unrecognised ISO language code");
-        return 1;
+        GherkinDialect dialect = new GherkinDialectProvider(language).getDefaultDialect();
+        System.out.println("WARNING: the --i18n is not implemented.");
+        return 0;
     }
 
     public List<CucumberFeature> cucumberFeatures(ResourceLoader resourceLoader) {
-        return load(resourceLoader, featurePaths, filters, System.out);
+        return load(resourceLoader, featurePaths, System.out);
     }
 
-    List<Object> getPlugins() {
+    public List<Object> getPlugins() {
         if (!pluginNamesInstantiated) {
             for (String pluginName : pluginFormatterNames) {
                 Object plugin = pluginFactory.create(pluginName);
                 plugins.add(plugin);
                 setMonochromeOnColorAwarePlugins(plugin);
                 setStrictOnStrictAwarePlugins(plugin);
+                setEventBusFormatterPlugins(plugin);
             }
             for (String pluginName : pluginStepDefinitionReporterNames) {
                 Object plugin = pluginFactory.create(pluginName);
@@ -262,10 +259,6 @@ public class RuntimeOptions {
 
     public Formatter formatter(ClassLoader classLoader) {
         return pluginProxy(classLoader, Formatter.class);
-    }
-
-    public Reporter reporter(ClassLoader classLoader) {
-        return pluginProxy(classLoader, Reporter.class);
     }
 
     public StepDefinitionReporter stepDefinitionReporter(ClassLoader classLoader) {
@@ -320,6 +313,13 @@ public class RuntimeOptions {
         }
     }
 
+    private void setEventBusFormatterPlugins(Object plugin) {
+        if (plugin instanceof Formatter && bus != null) {
+            Formatter formatter = (Formatter) plugin;
+            formatter.setEventPublisher(bus);
+        }
+    }
+
     public List<String> getGlue() {
         return glue;
     }
@@ -338,10 +338,33 @@ public class RuntimeOptions {
 
     public void addPlugin(Object plugin) {
         plugins.add(plugin);
+        if (plugin instanceof Formatter) {
+            setEventBusFormatterPlugins(plugin);
+        }
     }
 
-    public List<Object> getFilters() {
-        return filters;
+    public List<Pattern> getNameFilters() {
+        return nameFilters;
+    }
+
+    public List<String> getTagFilters() {
+        return tagFilters;
+    }
+
+    public Map<String, List<Long>> getLineFilters(ResourceLoader resourceLoader) {
+        processRerunFiles(resourceLoader);
+        return lineFilters;
+    }
+
+    private void processRerunFiles(ResourceLoader resourceLoader) {
+        for (String featurePath : featurePaths) {
+            if (featurePath.startsWith("@")) {
+                for (String path : CucumberFeature.loadRerunFile(resourceLoader, featurePath.substring(1))) {
+                    PathWithLines pathWithLines = new PathWithLines(path);
+                    addLineFilters(lineFilters, pathWithLines.path, pathWithLines.lines);
+                }
+            }
+        }
     }
 
     public boolean isMonochrome() {
@@ -405,5 +428,9 @@ public class RuntimeOptions {
                 nameList.addAll(names);
             }
         }
+    }
+
+    void setEventBus(EventBus bus) {
+        this.bus = bus;
     }
 }

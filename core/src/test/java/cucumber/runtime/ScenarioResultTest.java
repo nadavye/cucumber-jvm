@@ -1,21 +1,22 @@
 package cucumber.runtime;
 
-import gherkin.formatter.Reporter;
-import gherkin.formatter.model.Result;
-import gherkin.formatter.model.Scenario;
-import gherkin.formatter.model.Tag;
+import cucumber.api.Result;
+import cucumber.api.event.EmbedEvent;
+import cucumber.api.event.WriteEvent;
+import cucumber.runner.EventBus;
+import gherkin.pickles.Pickle;
 import org.junit.Test;
-
-import java.util.Collections;
+import org.mockito.ArgumentMatcher;
 
 import static org.junit.Assert.assertEquals;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Matchers.argThat;
 
 public class ScenarioResultTest {
 
-    private Reporter reporter = mock(Reporter.class);
-    private ScenarioImpl s = new ScenarioImpl(reporter, Collections.<Tag>emptySet(), mock(Scenario.class));
+    private EventBus bus = mock(EventBus.class);
+    private ScenarioImpl s = new ScenarioImpl(bus, mock(Pickle.class));
 
     @Test
     public void no_steps_is_passed() throws Exception {
@@ -60,12 +61,41 @@ public class ScenarioResultTest {
     public void embeds_data() {
         byte[] data = new byte[]{1, 2, 3};
         s.embed(data, "bytes/foo");
-        verify(reporter).embedding("bytes/foo", data);
+        verify(bus).send(argThat(new EmbedEventMatcher(data, "bytes/foo")));
     }
 
     @Test
     public void prints_output() {
         s.write("Hi");
-        verify(reporter).write("Hi");
+        verify(bus).send(argThat(new WriteEventMatcher("Hi")));
+    }
+}
+
+class EmbedEventMatcher extends ArgumentMatcher<WriteEvent> {
+    private byte[] data;
+    private String mimeType;
+
+    public EmbedEventMatcher(byte[] data, String mimeType) {
+        this.data = data;
+        this.mimeType = mimeType;
+    }
+
+    @Override
+    public boolean matches(Object argument) {
+        return (argument instanceof EmbedEvent &&
+                ((EmbedEvent)argument).data.equals(data) && ((EmbedEvent)argument).mimeType.equals(mimeType));
+    }
+}
+
+class WriteEventMatcher extends ArgumentMatcher<WriteEvent> {
+    private String text;
+
+    public WriteEventMatcher(String text) {
+        this.text = text;
+    }
+
+    @Override
+    public boolean matches(Object argument) {
+        return (argument instanceof WriteEvent && ((WriteEvent)argument).text.equals(text));
     }
 }

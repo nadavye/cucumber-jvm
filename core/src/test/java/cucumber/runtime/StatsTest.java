@@ -5,8 +5,8 @@ import static org.hamcrest.CoreMatchers.containsString;
 import static org.hamcrest.CoreMatchers.endsWith;
 import static org.hamcrest.CoreMatchers.startsWith;
 
-import gherkin.formatter.ansi.AnsiEscapes;
-import gherkin.formatter.model.Result;
+import cucumber.api.Result;
+import cucumber.api.formatter.AnsiEscapes;
 
 import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;

@@ -1,18 +1,18 @@
 package cucumber.runtime.formatter;
 
+import cucumber.api.Result;
+import cucumber.api.TestStep;
+import cucumber.api.event.EventHandler;
+import cucumber.api.event.EventPublisher;
+import cucumber.api.event.TestCaseFinished;
+import cucumber.api.event.TestCaseStarted;
+import cucumber.api.event.TestRunFinished;
+import cucumber.api.event.TestStepFinished;
+import cucumber.api.formatter.Formatter;
+import cucumber.api.formatter.StrictAware;
 import cucumber.runtime.CucumberException;
 import cucumber.runtime.io.URLOutputStream;
 import cucumber.runtime.io.UTF8OutputStreamWriter;
-import gherkin.formatter.Formatter;
-import gherkin.formatter.Reporter;
-import gherkin.formatter.model.Background;
-import gherkin.formatter.model.Examples;
-import gherkin.formatter.model.Feature;
-import gherkin.formatter.model.Match;
-import gherkin.formatter.model.Result;
-import gherkin.formatter.model.Scenario;
-import gherkin.formatter.model.ScenarioOutline;
-import gherkin.formatter.model.Step;
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
 import org.w3c.dom.Node;
@@ -37,7 +37,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 
-class JUnitFormatter implements Formatter, Reporter, StrictAware {
+class JUnitFormatter implements Formatter, StrictAware {
     private final Writer out;
     private final Document doc;
     private final Element rootElement;
@@ -45,9 +45,56 @@ class JUnitFormatter implements Formatter, Reporter, StrictAware {
     private TestCase testCase;
     private Element root;
 
+    private EventHandler<TestCaseStarted> caseStartedHandler= new EventHandler<TestCaseStarted>() {
+        @Override
+        public void receive(TestCaseStarted event) {
+            if (TestCase.currentFeatureFile != null && !TestCase.currentFeatureFile.equals(event.testCase.getPath())) {
+                TestCase.currentFeatureFile = event.testCase.getPath();
+                TestCase.previousTestCaseName = "";
+                TestCase.exampleNumber = 1;
+            }
+            testCase = new TestCase(event.testCase);
+            root = testCase.createElement(doc);
+            testCase.writeElement(doc, root);
+            rootElement.appendChild(root);
+
+            increaseAttributeValue(rootElement, "tests");
+        }
+    };
+    private EventHandler<TestCaseFinished> caseFinishedHandler = new EventHandler<TestCaseFinished>() {
+        @Override
+        public void receive(TestCaseFinished event) {
+            if (testCase.steps.isEmpty()) {
+                testCase.handleEmptyTestCase(doc, root);
+            }
+        }
+    };
+    private EventHandler<TestStepFinished> stepFinishedHandler = new EventHandler<TestStepFinished>() {
+        @Override
+        public void receive(TestStepFinished event) {
+            if (!event.testStep.isHook()) {
+                testCase.steps.add(event.testStep);
+                testCase.results.add(event.result);
+                testCase.updateElement(doc, root);
+            } else {
+                testCase.hookResults.add(event.result);
+                testCase.updateElement(doc, root);
+            }
+        }
+    };
+    private EventHandler<TestRunFinished> runFinishedHandler = new EventHandler<TestRunFinished>() {
+        @Override
+        public void receive(TestRunFinished event) {
+            finishReport();
+        }
+    };
+
     public JUnitFormatter(URL out) throws IOException {
         this.out = new UTF8OutputStreamWriter(new URLOutputStream(out));
         TestCase.treatSkippedAsFailure = false;
+        TestCase.currentFeatureFile = null;
+        TestCase.previousTestCaseName = "";
+        TestCase.exampleNumber = 1;
         try {
             doc = DocumentBuilderFactory.newInstance().newDocumentBuilder().newDocument();
             rootElement = doc.createElement("testsuite");
@@ -58,45 +105,14 @@ class JUnitFormatter implements Formatter, Reporter, StrictAware {
     }
 
     @Override
-    public void feature(Feature feature) {
-        TestCase.feature = feature;
-        TestCase.previousScenarioOutlineName = "";
-        TestCase.exampleNumber = 1;
+    public void setEventPublisher(EventPublisher publisher) {
+        publisher.registerHandlerFor(TestCaseStarted.class, caseStartedHandler);
+        publisher.registerHandlerFor(TestCaseFinished.class, caseFinishedHandler);
+        publisher.registerHandlerFor(TestStepFinished.class, stepFinishedHandler);
+        publisher.registerHandlerFor(TestRunFinished.class, runFinishedHandler);
     }
 
-    @Override
-    public void background(Background background) {
-        if (!isCurrentTestCaseCreatedNameless()) {
-            testCase = new TestCase();
-            root = testCase.createElement(doc);
-        }
-    }
-
-    @Override
-    public void scenario(Scenario scenario) {
-        if (isCurrentTestCaseCreatedNameless()) {
-            testCase.scenario = scenario;
-        } else {
-            testCase = new TestCase(scenario);
-            root = testCase.createElement(doc);
-        }
-        testCase.writeElement(doc, root);
-        rootElement.appendChild(root);
-
-        increaseAttributeValue(rootElement, "tests");
-    }
-
-    private boolean isCurrentTestCaseCreatedNameless() {
-        return testCase != null && testCase.scenario == null;
-    }
-
-    @Override
-    public void step(Step step) {
-        if (testCase != null) testCase.steps.add(step);
-    }
-
-    @Override
-    public void done() {
+    private void finishReport() {
         try {
             // set up a transformer
             rootElement.setAttribute("name", JUnitFormatter.class.getName());
@@ -117,18 +133,6 @@ class JUnitFormatter implements Formatter, Reporter, StrictAware {
         }
     }
 
-    @Override
-    public void startOfScenarioLifeCycle(Scenario scenario) {
-        // NoOp
-    }
-
-    @Override
-    public void endOfScenarioLifeCycle(Scenario scenario) {
-        if (testCase != null && testCase.steps.isEmpty()) {
-            testCase.handleEmptyTestCase(doc, root);
-        }
-    }
-
     private void addDummyTestCase() {
         Element dummy = doc.createElement("testcase");
         dummy.setAttribute("classname", "dummy");
@@ -137,31 +141,6 @@ class JUnitFormatter implements Formatter, Reporter, StrictAware {
         Element skipped = doc.createElement("skipped");
         skipped.setAttribute("message", "No features found");
         dummy.appendChild(skipped);
-    }
-
-    @Override
-    public void result(Result result) {
-        testCase.results.add(result);
-        testCase.updateElement(doc, root);
-    }
-
-    @Override
-    public void before(Match match, Result result) {
-        if (!isCurrentTestCaseCreatedNameless()) {
-            testCase = new TestCase();
-            root = testCase.createElement(doc);
-        }
-        handleHook(result);
-    }
-
-    @Override
-    public void after(Match match, Result result) {
-        handleHook(result);
-    }
-
-    private void handleHook(Result result) {
-        testCase.hookResults.add(result);
-        testCase.updateElement(doc, root);
     }
 
     private String sumTimes(NodeList testCaseNodes) {
@@ -191,43 +170,6 @@ class JUnitFormatter implements Formatter, Reporter, StrictAware {
     }
 
     @Override
-    public void scenarioOutline(ScenarioOutline scenarioOutline) {
-        testCase = null;
-    }
-
-    @Override
-    public void examples(Examples examples) {
-    }
-
-    @Override
-    public void match(Match match) {
-    }
-
-    @Override
-    public void embedding(String mimeType, byte[] data) {
-    }
-
-    @Override
-    public void write(String text) {
-    }
-
-    @Override
-    public void uri(String uri) {
-    }
-
-    @Override
-    public void close() {
-    }
-
-    @Override
-    public void eof() {
-    }
-
-    @Override
-    public void syntaxError(String state, String event, List<String> legalEvents, String uri, Integer line) {
-    }
-
-    @Override
     public void setStrict(boolean strict) {
         TestCase.treatSkippedAsFailure = strict;
     }
@@ -239,44 +181,41 @@ class JUnitFormatter implements Formatter, Reporter, StrictAware {
             NUMBER_FORMAT.applyPattern("0.######");
         }
 
-        private TestCase(Scenario scenario) {
-            this.scenario = scenario;
+        private TestCase(cucumber.api.TestCase testCase) {
+            this.testCase = testCase;
         }
 
-        private TestCase() {
-        }
-
-        Scenario scenario;
-        static Feature feature;
-        static String previousScenarioOutlineName;
+        static String currentFeatureFile;
+        static String previousTestCaseName;
         static int exampleNumber;
         static boolean treatSkippedAsFailure = false;
-        final List<Step> steps = new ArrayList<Step>();
+        final List<TestStep> steps = new ArrayList<TestStep>();
         final List<Result> results = new ArrayList<Result>();
         final List<Result> hookResults = new ArrayList<Result>();
+        private final cucumber.api.TestCase testCase;
 
         private Element createElement(Document doc) {
             return doc.createElement("testcase");
         }
 
         private void writeElement(Document doc, Element tc) {
-            tc.setAttribute("classname", feature.getName());
-            tc.setAttribute("name", calculateElementName(scenario));
+            tc.setAttribute("classname", testCase.getPath());
+            tc.setAttribute("name", calculateElementName(testCase));
         }
 
-        private String calculateElementName(Scenario scenario) {
-            String scenarioName = scenario.getName();
-            if (scenario.getKeyword().equals("Scenario Outline") && scenarioName.equals(previousScenarioOutlineName)) {
-                return scenarioName + (includesBlank(scenarioName) ? " " : "_") + ++exampleNumber;
+        private String calculateElementName(cucumber.api.TestCase testCase) {
+            String testCaseName = testCase.getName();
+            if (testCaseName.equals(previousTestCaseName)) {
+                return testCaseName + (includesBlank(testCaseName) ? " " : "_") + ++exampleNumber;
             } else {
-                previousScenarioOutlineName = scenario.getKeyword().equals("Scenario Outline") ? scenarioName : "";
+                previousTestCaseName = testCase.getName();
                 exampleNumber = 1;
-                return scenarioName;
+                return testCaseName;
             }
         }
 
-        private boolean includesBlank(String scenarioName) {
-            return scenarioName.indexOf(' ') != -1;
+        private boolean includesBlank(String testCaseName) {
+            return testCaseName.indexOf(' ') != -1;
         }
 
         public void updateElement(Document doc, Element tc) {
@@ -344,8 +283,7 @@ class JUnitFormatter implements Formatter, Reporter, StrictAware {
                 if (i < results.size()) {
                     resultStatus = results.get(i).getStatus();
                 }
-                sb.append(steps.get(i).getKeyword());
-                sb.append(steps.get(i).getName());
+                sb.append(steps.get(i).getStepText());
                 do {
                   sb.append(".");
                 } while (sb.length() - length < 76);

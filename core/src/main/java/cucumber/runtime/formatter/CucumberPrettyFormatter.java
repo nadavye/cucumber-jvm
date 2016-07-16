@@ -1,14 +1,21 @@
 package cucumber.runtime.formatter;
 
-import gherkin.formatter.PrettyFormatter;
+import cucumber.api.event.EventPublisher;
+import cucumber.api.formatter.ColorAware;
+import cucumber.api.formatter.Formatter;
 
-class CucumberPrettyFormatter extends PrettyFormatter implements ColorAware {
+public class CucumberPrettyFormatter implements Formatter, ColorAware {
+    private boolean monochrome;
+
     public CucumberPrettyFormatter(Appendable out) {
-        super(out, false, true);
+    }
+
+    @Override
+    public void setEventPublisher(EventPublisher publisher) {
     }
 
     @Override
     public void setMonochrome(boolean monochrome) {
-        super.setMonochrome(monochrome);
+        this.monochrome = monochrome;
     }
 }

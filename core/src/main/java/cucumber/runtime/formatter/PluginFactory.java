@@ -2,13 +2,12 @@ package cucumber.runtime.formatter;
 
 import cucumber.api.StepDefinitionReporter;
 import cucumber.api.SummaryPrinter;
+import cucumber.api.formatter.Formatter;
 import cucumber.runtime.CucumberException;
 import cucumber.runtime.DefaultSummaryPrinter;
 import cucumber.runtime.NullSummaryPrinter;
 import cucumber.runtime.io.URLOutputStream;
 import cucumber.runtime.io.UTF8OutputStreamWriter;
-import gherkin.formatter.Formatter;
-import gherkin.formatter.Reporter;
 
 import java.io.File;
 import java.io.IOException;
@@ -41,8 +40,7 @@ import static java.util.Arrays.asList;
  * </ul>
  * Plugins must implement one of the following interfaces:
  * <ul>
- * <li>{@link gherkin.formatter.Formatter}</li>
- * <li>{@link gherkin.formatter.Reporter}</li>
+ * <li>{@link cucumber.api.formatter.formatter.Formatter}</li>
  * <li>{@link cucumber.api.StepDefinitionReporter}</li>
  * </ul>
  */
@@ -193,7 +191,7 @@ public class PluginFactory {
 
     public static boolean isFormatterName(String name) {
         Class pluginClass = getPluginClass(name);
-        if (Formatter.class.isAssignableFrom(pluginClass) || Reporter.class.isAssignableFrom(pluginClass)) {
+        if (Formatter.class.isAssignableFrom(pluginClass)) {
             return true;
         }
         return false;
