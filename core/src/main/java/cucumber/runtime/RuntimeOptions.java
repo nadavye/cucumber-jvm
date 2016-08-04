@@ -238,6 +238,10 @@ public class RuntimeOptions {
     public List<Object> getPlugins() {
         if (!pluginNamesInstantiated) {
             for (String pluginName : pluginFormatterNames) {
+                if (notUpdatedFormatter(pluginName)) {
+                    System.out.println("WARNING: The " + pluginName.split(":")[0] + " formatter is not updated yet and is therefore not used.");
+                    continue;
+                }
                 Object plugin = pluginFactory.create(pluginName);
                 plugins.add(plugin);
                 setMonochromeOnColorAwarePlugins(plugin);
@@ -255,6 +259,16 @@ public class RuntimeOptions {
             pluginNamesInstantiated = true;
         }
         return plugins;
+    }
+
+    private boolean notUpdatedFormatter(String pluginName) {
+        List<String> NOT_UPDATED_FORMATTERS = java.util.Arrays.asList("html", "json", "pretty");
+        for (String name : NOT_UPDATED_FORMATTERS) {
+            if (name.equals(pluginName.split(":")[0])) {
+                return true;
+            }
+        }
+        return false;
     }
 
     public Formatter formatter(ClassLoader classLoader) {
