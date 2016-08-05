@@ -32,19 +32,8 @@ public class DataTableDiff extends DataTable {
     }
 
     @Override
-    protected void printStartIndent(StringBuilder buffer, int rowIndex) {
-        switch (diffTypes.get(rowIndex)) {
-        case NONE:
-            buffer.append("      ");
-            break;
-        case DELETE:
-            buffer.append("    - ");
-            break;
-        case INSERT:
-            buffer.append("    + ");
-            break;
-        }
+    protected TablePrinter createTablePrinter() {
+        return new DiffTablePrinter(diffTypes);
     }
-
 
 }

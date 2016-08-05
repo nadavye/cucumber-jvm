@@ -11,12 +11,14 @@ import cucumber.runtime.formatter.PluginFactory;
 import cucumber.runtime.io.ResourceLoader;
 import cucumber.runtime.model.CucumberFeature;
 import cucumber.runtime.model.PathWithLines;
+import cucumber.runtime.table.TablePrinter;
 import cucumber.util.FixJava;
-import gherkin.GherkinDialect;
+import cucumber.util.Mapper;
 import gherkin.GherkinDialectProvider;
 
 import java.io.InputStreamReader;
 import java.io.Reader;
+import java.lang.reflect.Field;
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
@@ -28,6 +30,9 @@ import java.util.ResourceBundle;
 import java.util.regex.Pattern;
 
 import static cucumber.runtime.model.CucumberFeature.load;
+import static cucumber.util.FixJava.join;
+import static cucumber.util.FixJava.map;
+import static java.util.Arrays.asList;
 
 // IMPORTANT! Make sure USAGE.txt is always uptodate if this class changes.
 public class RuntimeOptions {
@@ -35,6 +40,19 @@ public class RuntimeOptions {
     public static final String USAGE_RESOURCE = "/cucumber/api/cli/USAGE.txt";
 
     static String usageText;
+
+    private static final Mapper<String, String> QUOTE_MAPPER = new Mapper<String, String>() {
+        @Override
+        public String map(String o) {
+            return '"' + o + '"';
+        }
+    };
+    private static final Mapper<String, String> CODE_KEYWORD_MAPPER = new Mapper<String, String>() {
+        @Override
+        public String map(String keyword) {
+            return keyword.replaceAll("[\\s',!]", "");
+        }
+    };
 
     private final List<String> glue = new ArrayList<String>();
     private final List<String> tagFilters = new ArrayList<String>();
@@ -226,8 +244,50 @@ public class RuntimeOptions {
     }
 
     private int printI18n(String language) {
-        GherkinDialect dialect = new GherkinDialectProvider(language).getDefaultDialect();
-        System.out.println("WARNING: the --i18n is not implemented.");
+        GherkinDialectProvider dialectProvider = new GherkinDialectProvider();
+        Map<String, Map<String, List<String>>> languages;
+        try { // TODO: Fix when Gherkin provide a getter for the dialects.
+            Field f;
+            f = dialectProvider.getClass().getDeclaredField("DIALECTS");
+            f.setAccessible(true);
+            languages = (Map<String, Map<String, List<String>>>) f.get(dialectProvider);
+        } catch (Exception e) {
+            System.err.println("Failed to get the list of languages.");
+            return 1;
+        }
+
+        if (language.equalsIgnoreCase("help")) {
+            for (String code : languages.keySet()) {
+                System.out.println(code);
+            }
+            return 0;
+        }
+        if (languages.containsKey(language)) {
+            return printKeywordsFor(languages.get(language));
+        }
+
+        System.err.println("Unrecognised ISO language code");
+        return 1;
+    }
+
+    private int printKeywordsFor(Map<String, List<String>> language) {
+        StringBuilder builder = new StringBuilder();
+        TablePrinter printer = new TablePrinter();
+        List<List<String>> table = new ArrayList<List<String>>();
+        for (String key : asList("feature", "background", "scenario", "scenarioOutline", "examples", "given", "when", "then", "and", "but")) {
+            List<String> cells = asList(key, join(map(language.get(key), QUOTE_MAPPER), ", "));
+            table.add(cells);
+        }
+        for (String key : asList("given", "when", "then", "and", "but")) {
+            List<String> codeKeywordList = new ArrayList<String>(language.get(key));
+            codeKeywordList.remove("* ");
+            String codeKeywords = join(map(map(codeKeywordList, CODE_KEYWORD_MAPPER), QUOTE_MAPPER), ", ");
+
+            List<String> cells = asList(key + " (code)", codeKeywords);
+            table.add(cells);
+        }
+        printer.printTable(table, builder);
+        System.out.println(builder.toString());
         return 0;
     }
 
