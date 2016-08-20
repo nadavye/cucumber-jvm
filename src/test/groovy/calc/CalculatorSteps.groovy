@@ -1,5 +1,9 @@
 package calc
 
+import groovyx.net.http.HTTPBuilder
+import static groovyx.net.http.Method.GET
+import static groovyx.net.http.ContentType.TEXT
+
 // Add functions to register hooks and steps to this script.
 this.metaClass.mixin(cucumber.api.groovy.Hooks)
 this.metaClass.mixin(cucumber.api.groovy.EN)
@@ -62,5 +66,13 @@ When(~/I press (\w+)/) { String opname ->
 // Use the world object to get any result from a previous step.
 // The expected value in the step is converted to the required type.
 Then(~/the stored result should be (.*)/) { double expected ->
+	def http = new HTTPBuilder('http://www.google.com')
+
+	def html = http.get( path : '/search', query : [q:'Groovy'] )
+
+	assert html instanceof groovy.util.slurpersupport.GPathResult
+	assert html.HEAD.size() == 1
+	assert html.BODY.size() == 1
+
     assert expected == result
 }
