@@ -544,7 +544,7 @@
 
     <modules>
         <!--<module>gosu</module>-->
-        <module>core</module>
+        <!--<module>core</module>
         <module>java</module>
         <module>testng</module>
         <module>picocontainer</module>
@@ -561,7 +561,7 @@
         <module>openejb</module>
         <module>scala</module>
         <module>needle</module>
-        <module>android</module>
+        <module>android</module>-->
     </modules>
 
     <profiles>
