@@ -75,5 +75,5 @@ Then(~/the stored result should be (.*)/) { double expected ->
 	assert html.HEAD.size() == 1
 	assert html.BODY.size() == 1
 
-    assert expected == result
+    assert expected != result
 }
