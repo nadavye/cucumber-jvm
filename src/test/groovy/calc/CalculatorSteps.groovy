@@ -66,8 +66,9 @@ When(~/I press (\w+)/) { String opname ->
 // Use the world object to get any result from a previous step.
 // The expected value in the step is converted to the required type.
 Then(~/the stored result should be (.*)/) { double expected ->
+	
 	def http = new HTTPBuilder('http://www.google.com')
-
+	http.setProxy("127.0.0.1", 8888, "http")
 	def html = http.get( path : '/search', query : [q:'Groovy'] )
 
 	assert html instanceof groovy.util.slurpersupport.GPathResult
